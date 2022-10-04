@@ -7,4 +7,88 @@ output: github_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## GitHub Documents
+## INKAR 
+
+
+```{r, load-packages}
+library(tidyverse)
+library(glue)
+library(vroom)
+library(DBI)
+library(duckdb)
+```
+
+
+```{r, duckdb-version}
+packageVersion("duckdb")
+```
+
+### Read data from a parquet file via DuckDB
+
+*Prepare connection*
+
+```{r}
+# https://gist.github.com/cboettig/b1840f20996139d422ab497613dfdbde
+conn <- DBI::dbConnect(duckdb(), ":memory:",
+                       config=list("memory_limit"="2GB",
+                                   "temp_directory" = "/tmp"))
+
+DBI::dbExecute(conn, "INSTALL 'httpfs';")
+DBI::dbExecute(conn, "LOAD 'httpfs';")
+```
+
+### Create query and get the data
+
+```{r}
+q_parquet <- "https://raw.githubusercontent.com/patperu/inkar/master/data/inkar_2021.parquet"
+q_ID <- 131 # Durchschnittsalter der Bevölkerung
+q_Raumbezug <- "Kreise"
+
+query <- glue_sql("
+              SELECT *
+              FROM {`q_parquet`}
+              WHERE Raumbezug = {q_Raumbezug}
+                  AND ID = {q_ID};
+              ", .con = conn)
+
+res <- DBI::dbGetQuery(conn, query) |> tibble()
+
+```
+
+
+```{r, echo=FALSE}
+glimpse(res)
+```
+
+### Mean age of the population
+
+```{r, plot-mean-age, fig.height=6, fig.width=11}
+res <- res |> 
+  mutate(
+    Kennziffer = str_pad(Kennziffer, width = 5, side = "left", pad = "0"), 
+    Bundesland = str_sub(Kennziffer, 1, 2), 
+    Zeitbezug = as.integer(Zeitbezug)
+  )
+
+res |> 
+  ggplot(aes(x = Zeitbezug, y = Wert, group = Kennziffer, color = Bundesland)) +
+  geom_line(alpha = 0.50, show.legend = FALSE) +
+  facet_wrap(vars(Bundesland), nrow = 2) +
+  
+  theme_bw() + 
+  labs(title = "Durchschnittsalter der Bevölkerung",
+       subtitle = "in den Kreisen der Bundesländern",
+       x = NULL,
+       y = "",
+       caption = "Daten: INKAR 2021 BBSR | Grafik: ...") + 
+  theme(
+    axis.text.y = element_text(color = "gray20", size = 9),
+    axis.text.x = element_text(color = "gray20", angle = 90, vjust = 0.5, size = 7)
+  ) 
+```
+
+
+```{r}
+dbDisconnect(conn, shutdown=TRUE)
+```
+
